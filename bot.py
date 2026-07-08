@@ -5,10 +5,11 @@ from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 
-DB_PATH = "clipboard.db"
+DB_PATH = "/data/clipboard.db"
 
 # ---- Database Setup ----
 def init_db():
+    os.makedirs("/data", exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute("""
@@ -27,7 +28,6 @@ def save_clip(user_id, content, title=None):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     if not title:
-        # Auto-generate title from first few words
         title = content[:50].replace("\n", " ") + ("..." if len(content) > 50 else "")
     c.execute("INSERT INTO clips (user_id, content, title) VALUES (?, ?, ?)", (user_id, content, title))
     clip_id = c.lastrowid
@@ -95,14 +95,14 @@ async def save_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     text = update.message.text.strip()
 
-    # Skip if it's a command
     if text.startswith("/"):
         return
 
     clip_id = save_clip(user_id, text)
+    preview = text[:100] + ("..." if len(text) > 100 else "")
     await update.message.reply_text(
         f"✅ Saved! (Clip #{clip_id})\n"
-        f"📝 <i>{text[:100]}{'...' if len(text) > 100 else ''}</i>\n\n"
+        f"📝 <i>{preview}</i>\n\n"
         "Use /list to view all clips.",
         parse_mode="HTML"
     )
@@ -123,14 +123,12 @@ async def list_clips(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = []
     for clip in clips:
         clip_id, content, title, created = clip
-        preview = content[:60].replace("\n", " ") + ("..." if len(content) > 60 else "")
         btn = InlineKeyboardButton(
             f"📋 {title[:30]}",
             callback_data=f"view_{clip_id}"
         )
         keyboard.append([btn])
 
-    # Pagination buttons
     nav_buttons = []
     if page > 0:
         nav_buttons.append(InlineKeyboardButton("◀️ Prev", callback_data=f"page_{page-1}"))
@@ -162,7 +160,6 @@ async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = []
     for clip in clips:
         clip_id, content, title, created = clip
-        preview = content[:60].replace("\n", " ") + ("..." if len(content) > 60 else "")
         btn = InlineKeyboardButton(
             f"📋 {title[:30]}",
             callback_data=f"view_{clip_id}"
@@ -171,7 +168,7 @@ async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(
-        f"🔍 <b>Search Results for "{query}"</b>",
+        f'🔍 <b>Search Results for "{query}"</b>',
         reply_markup=reply_markup,
         parse_mode="HTML"
     )
@@ -206,10 +203,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 [InlineKeyboardButton("◀️ Back to List", callback_data="page_0")]
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
+            body = content[:1500] + ("..." if len(content) > 1500 else "")
             await query.edit_message_text(
-                f"<b>{title}</b>\n\n"
-                f"<code>{content[:1500]}</code>"
-                f"{'...' if len(content) > 1500 else ''}",
+                f"<b>{title}</b>\n\n<code>{body}</code>",
                 reply_markup=reply_markup,
                 parse_mode="HTML"
             )
@@ -228,10 +224,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         clip = get_clip_by_id(clip_id, user_id)
         if clip:
             content, title = clip
+            body = content[:1500] + ("..." if len(content) > 1500 else "")
             await query.edit_message_text(
-                f"<b>📋 Copy this text:</b>\n\n"
-                f"<code>{content[:1500]}</code>"
-                f"{'...' if len(content) > 1500 else ''}",
+                f"<b>📋 Copy this text:</b>\n\n<code>{body}</code>",
                 parse_mode="HTML"
             )
         else:
@@ -239,7 +234,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif data.startswith("page_"):
         page = int(data.split("_")[1])
-        # Re-create the list for this page
         limit = 5
         offset = page * limit
         clips = get_user_clips(user_id, limit, offset)
